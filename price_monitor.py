@@ -26,7 +26,7 @@ def is_market_open():
     # Check market hours (9:30 AM - 4:00 PM ET)
     current_time = now.time()
     market_open = datetime.strptime("09:30", "%H:%M").time()
-    market_close = datetime.strptime("23:00", "%H:%M").time()
+    market_close = datetime.strptime("16:00", "%H:%M").time()
     
     if market_open <= current_time <= market_close:
         return True
