@@ -9,26 +9,31 @@ from st_supabase_connection import SupabaseConnection
 
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
 
-# Discord Webhook URL (from secrets)
 DISCORD_WEBHOOK = st.secrets.get("DISCORD_WEBHOOK", "")
+
+def send_discord_alert(message: str):
+    if DISCORD_WEBHOOK:
+        requests.post(DISCORD_WEBHOOK, json={"content": message})
 
 @st.cache_resource
 def get_supabase():
-    # uses [supabase] section in .streamlit/secrets.toml
     return st.connection("supabase", type=SupabaseConnection)
 
 supabase = get_supabase()
 
-# ----------------- LOAD PORTFOLIO FROM SUPABASE -----------------
+# ----------------- LOAD PORTFOLIO (WITH standard_price) -----------------
 
 if "portfolio" not in st.session_state:
     resp = supabase.table("portfolio").select("*").execute()
-    if resp.data:
-        df = pd.DataFrame(resp.data)
-    else:
-        df = pd.DataFrame(
-            columns=["id", "ticker", "buy_price", "shares", "added_date"]
-        )
+    df = pd.DataFrame(resp.data) if resp.data else pd.DataFrame(
+        columns=["id", "ticker", "buy_price", "shares", "added_date", "standard_price"]
+    )
+
+    # Ensure standard_price exists and is initialized from buy_price if missing
+    if "standard_price" not in df.columns:
+        df["standard_price"] = df["buy_price"]
+    df["standard_price"] = df["standard_price"].fillna(df["buy_price"])
+
     st.session_state.portfolio = df
 
 # ----------------- APP HEADER -----------------
@@ -51,22 +56,20 @@ with st.sidebar:
             if ticker:
                 added_date = datetime.now().strftime("%Y-%m-%d")
 
-                # 1) Save to Supabase
                 data = {
                     "ticker": ticker,
                     "buy_price": float(buy_price),
                     "shares": int(shares),
                     "added_date": added_date,
+                    "standard_price": float(buy_price),
                 }
                 resp = supabase.table("portfolio").insert(data).execute()
-
-                # 2) Append inserted row (with id) to session_state
                 inserted = resp.data[0]
                 new_row = pd.DataFrame([inserted])
+
                 st.session_state.portfolio = pd.concat(
                     [st.session_state.portfolio, new_row], ignore_index=True
                 )
-
                 st.success(f"Added {ticker}")
 
     # Remove stock
@@ -83,14 +86,11 @@ with st.sidebar:
             row = st.session_state.portfolio.iloc[remove_idx]
             row_id = row["id"]
 
-            # 1) Delete from Supabase
             supabase.table("portfolio").delete().eq("id", row_id).execute()
 
-            # 2) Delete from session_state
             st.session_state.portfolio = (
                 st.session_state.portfolio.drop(remove_idx).reset_index(drop=True)
             )
-
             st.rerun()
 
 # ----------------- MAIN DASHBOARD -----------------
@@ -98,20 +98,39 @@ with st.sidebar:
 if st.session_state.portfolio.empty:
     st.info("👆 Add your first stock in the sidebar!")
 else:
-    # Fetch current prices
     tickers = st.session_state.portfolio["ticker"].tolist()
     prices_data = yf.download(
         tickers, period="1d", interval="1m", progress=False
     )["Close"].iloc[-1]
 
-    # Calculate metrics
     portfolio_metrics = []
+    drop_alerts = []
+
     for _, row in st.session_state.portfolio.iterrows():
         ticker = row["ticker"]
         buy_price = float(row["buy_price"])
         shares = int(row["shares"])
+        standard_price = float(row.get("standard_price", buy_price))
+        row_id = row["id"]
 
-        current_price = prices_data.get(ticker, 0)
+        current_price = float(prices_data.get(ticker, 0.0))
+
+        # Move standard_price up if new high
+        if current_price > standard_price:
+            standard_price = current_price
+            supabase.table("portfolio").update(
+                {"standard_price": standard_price}
+            ).eq("id", row_id).execute()
+
+        # Check for 7% drop from standard_price
+        if current_price > 0:
+            drop_pct = (current_price - standard_price) / standard_price * 100
+        else:
+            drop_pct = 0
+
+        if drop_pct <= -7:
+            drop_alerts.append((ticker, standard_price, current_price, drop_pct))
+
         gain_loss_pct = (
             (current_price - buy_price) / buy_price * 100 if current_price > 0 else 0
         )
@@ -131,7 +150,7 @@ else:
 
     df_portfolio = pd.DataFrame(portfolio_metrics)
 
-    # Portfolio Summary
+    # Portfolio summary
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         total_value = df_portfolio["total_value"].sum()
@@ -148,37 +167,30 @@ else:
     with col4:
         st.metric("Stocks", len(df_portfolio))
 
-    # Portfolio Table
     st.subheader("📋 Portfolio Details")
     st.dataframe(df_portfolio.round(2), use_container_width=True)
 
-    # Alerts Section
-    st.subheader("🚨 Alerts Configuration")
+    st.subheader("🚨 Alerts")
 
-    # Price Drop Alert (7%)
-    price_alerts = df_portfolio[df_portfolio["gain_loss_pct"] <= -7]
-    if not price_alerts.empty:
-        st.error(f"🔴 **PRICE DROP ALERT**: {len(price_alerts)} stocks down >7%!")
-        for _, alert in price_alerts.iterrows():
+    # 7% drop alerts
+    if drop_alerts:
+        st.error(f"🔴 7% DROP ALERTS: {len(drop_alerts)} stocks hit the threshold")
+        lines = []
+        for ticker, std_price, curr_price, drop_pct in drop_alerts:
             st.error(
-                f"**{alert['ticker']}**: {alert['gain_loss_pct']:.1f}% ({alert['current_price']:.2f})"
+                f"**{ticker}** dropped {drop_pct:.1f}% from {std_price:.2f} to {curr_price:.2f}"
+            )
+            lines.append(
+                f"{ticker}: {drop_pct:.1f}% drop ({std_price:.2f} → {curr_price:.2f})"
             )
 
-    # Test Discord Notification
-    if st.button("🔔 Test Discord Alert"):
-        def send_discord_alert(message: str):
-            if DISCORD_WEBHOOK:
-                data = {"content": message}
-                requests.post(DISCORD_WEBHOOK, json=data)
-            else:
-                st.warning("Add DISCORD_WEBHOOK to Streamlit secrets!")
+        message = "**Price Drop Alert (7%)**\n" + "\n".join(lines)
+        send_discord_alert(message)
 
+    # Manual test alert button
+    if st.button("🔔 Test Discord Alert"):
         send_discord_alert("**Portfolio Tracker Test**\nDashboard is working! 🚀")
         st.success("Test sent!")
-
-    # Auto-check button (placeholder)
-    if st.button("🔍 Check Insider Activity Now"):
-        st.info("🔍 Checking SEC EDGAR for insider activity... (not implemented yet)")
 
 # ----------------- FOOTER -----------------
 
