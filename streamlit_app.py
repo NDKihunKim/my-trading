@@ -6,6 +6,9 @@ from datetime import datetime
 import json
 from supabase import create_client
 
+# Discord Webhook URL (you'll add this)
+DISCORD_WEBHOOK = st.secrets.get("DISCORD_WEBHOOK", "")
+
 @st.cache_resource
 def get_supabase():
     url = st.secrets["SUPABASE_URL"]
@@ -14,18 +17,20 @@ def get_supabase():
 
 supabase = get_supabase()
 
-
-# Discord Webhook URL (you'll add this)
-DISCORD_WEBHOOK = st.secrets.get("DISCORD_WEBHOOK", "")
-
 # App Title
 st.set_page_config(page_title="Portfolio Tracker", layout="wide")
 st.title("📈 Portfolio Tracker & Insider Alerts")
 st.markdown("**Track 10-50 stocks • Real-time prices • Insider activity • Discord alerts**")
 
 # Portfolio Management
-if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = pd.DataFrame(columns=['ticker', 'buy_price', 'shares', 'added_date'])
+if "portfolio" not in st.session_state:
+    # Load existing rows from Supabase
+    resp = supabase.table("portfolio").select("*").execute()
+    df = pd.DataFrame(resp.data) if resp.data else pd.DataFrame(
+        columns=["id", "ticker", "buy_price", "shares", "added_date"]
+    )
+    st.session_state.portfolio = df
+
 
 # Sidebar: Add/Edit Portfolio
 with st.sidebar:
@@ -39,20 +44,48 @@ with st.sidebar:
         
         if st.button("Add Stock"):
             if ticker:
-                new_row = pd.DataFrame({
-                    'ticker': [ticker], 'buy_price': [buy_price], 
-                    'shares': [shares], 'added_date': [datetime.now().strftime("%Y-%m-%d")]
-                })
-                st.session_state.portfolio = pd.concat([st.session_state.portfolio, new_row], ignore_index=True)
+                added_date = datetime.now().strftime("%Y-%m-%d")
+
+                # 1) Save to Supabase
+                data = {
+                    "ticker": ticker,
+                    "buy_price": float(buy_price),
+                    "shares": int(shares),
+                    "added_date": added_date,
+                }
+                resp = supabase.table("portfolio").insert(data).execute()
+
+                # 2) Get inserted row (with id) and add to session_state
+                inserted = resp.data[0]
+                new_row = pd.DataFrame([inserted])
+                st.session_state.portfolio = pd.concat(
+                    [st.session_state.portfolio, new_row], ignore_index=True
+                )
+
                 st.success(f"Added {ticker}")
-    
+
     # Remove stock
     if not st.session_state.portfolio.empty:
         st.header("❌ Remove Stock")
-        remove_idx = st.selectbox("Select to remove:", range(len(st.session_state.portfolio)),
-                                 format_func=lambda i: st.session_state.portfolio.iloc[i]['ticker'])
+
+        remove_idx = st.selectbox(
+            "Select to remove:",
+            range(len(st.session_state.portfolio)),
+            format_func=lambda i: st.session_state.portfolio.iloc[i]["ticker"],
+        )
+
         if st.button("Remove"):
-            st.session_state.portfolio = st.session_state.portfolio.drop(remove_idx).reset_index(drop=True)
+            row = st.session_state.portfolio.iloc[remove_idx]
+            row_id = row["id"]
+
+            # 1) Delete from Supabase
+            supabase.table("portfolio").delete().eq("id", row_id).execute()
+
+            # 2) Delete from session_state
+            st.session_state.portfolio = (
+                st.session_state.portfolio.drop(remove_idx).reset_index(drop=True)
+            )
+
             st.rerun()
 
 # Main Dashboard
