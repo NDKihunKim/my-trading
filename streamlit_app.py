@@ -4,6 +4,16 @@ import pandas as pd
 import requests
 from datetime import datetime
 import json
+from supabase import create_client
+
+@st.cache_resource
+def get_supabase():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+supabase = get_supabase()
+
 
 # Discord Webhook URL (you'll add this)
 DISCORD_WEBHOOK = st.secrets.get("DISCORD_WEBHOOK", "")
