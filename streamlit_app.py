@@ -119,32 +119,14 @@ else:
         prices_data = {}
 
     portfolio_metrics = []
-    drop_alerts = []
 
     for _, row in st.session_state.portfolio.iterrows():
         ticker = row["ticker"]
         buy_price = float(row["buy_price"])
         shares = int(row["shares"])
         standard_price = float(row.get("standard_price", buy_price))
-        row_id = row["id"]
 
         current_price = float(prices_data.get(ticker, 0.0))
-
-        # Move standard_price up if new high
-        if current_price > standard_price:
-            standard_price = current_price
-            supabase.table("portfolio").update(
-                {"standard_price": standard_price}
-            ).eq("id", row_id).execute()
-
-        # Check for 7% drop from standard_price
-        if current_price > 0:
-            drop_pct = (current_price - standard_price) / standard_price * 100
-        else:
-            drop_pct = 0
-
-        if drop_pct <= -7:
-            drop_alerts.append((ticker, standard_price, current_price, drop_pct))
 
         gain_loss_pct = (
             (current_price - buy_price) / buy_price * 100 if current_price > 0 else 0
@@ -186,29 +168,16 @@ else:
     st.subheader("📋 Portfolio Details")
     st.dataframe(df_portfolio.round(2), use_container_width=True)
 
-    st.subheader("🚨 Alerts")
-
-    # 7% drop alerts
-    if drop_alerts:
-        st.error(f"🔴 7% DROP ALERTS: {len(drop_alerts)} stocks hit the threshold")
-        lines = []
-        for ticker, std_price, curr_price, drop_pct in drop_alerts:
-            st.error(
-                f"**{ticker}** dropped {drop_pct:.1f}% from {std_price:.2f} to {curr_price:.2f}"
-            )
-            lines.append(
-                f"{ticker}: {drop_pct:.1f}% drop ({std_price:.2f} → {curr_price:.2f})"
-            )
-
-        message = "**Price Drop Alert (7%)**\n" + "\n".join(lines)
-        send_discord_alert(message)
+    st.subheader("🔔 Manual Actions")
 
     # Manual test alert button
     if st.button("🔔 Test Discord Alert"):
         send_discord_alert("**Portfolio Tracker Test**\nDashboard is working! 🚀")
         st.success("Test sent!")
+    
+    st.info("💡 Automatic price monitoring runs every 15 minutes via GitHub Actions. Check your Discord for alerts!")
 
 # ----------------- FOOTER -----------------
 
 st.markdown("---")
-st.caption("💡 Free-only • Cloud-hosted • No historical data • Hourly updates")
+st.caption("💡 Free-only • Cloud-hosted • Monitored every 15 min • GitHub Actions")
