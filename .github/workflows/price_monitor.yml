@@ -3,7 +3,7 @@ name: Price Monitor
 
 on:
   schedule:
-    - cron: '*/15 14-21 * * 1-5'
+    - cron: '*/15 13-21 * * 1-5'
   workflow_dispatch:
 
 jobs:
