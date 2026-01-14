@@ -140,6 +140,7 @@ else:
             {
                 "ticker": ticker,
                 "buy_price": buy_price,
+                "standard_price": standard_price,
                 "current_price": current_price,
                 "gain_loss_pct": gain_loss_pct,
                 "gain_loss_dollar": gain_loss_dollar,
