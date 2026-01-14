@@ -99,9 +99,24 @@ if st.session_state.portfolio.empty:
     st.info("👆 Add your first stock in the sidebar!")
 else:
     tickers = st.session_state.portfolio["ticker"].tolist()
-    prices_data = yf.download(
-        tickers, period="1d", interval="1m", progress=False
-    )["Close"].iloc[-1]
+    
+    # Handle single vs multiple tickers for yfinance
+    try:
+        if len(tickers) == 1:
+            data = yf.download(tickers[0], period="1d", interval="1m", progress=False)
+            if not data.empty:
+                prices_data = {tickers[0]: float(data["Close"].iloc[-1])}
+            else:
+                prices_data = {}
+        else:
+            data = yf.download(tickers, period="1d", interval="1m", progress=False)["Close"].iloc[-1]
+            if isinstance(data, pd.Series):
+                prices_data = data.to_dict()
+            else:
+                prices_data = {}
+    except Exception as e:
+        st.error(f"Error fetching prices: {e}")
+        prices_data = {}
 
     portfolio_metrics = []
     drop_alerts = []
@@ -140,7 +155,7 @@ else:
             {
                 "ticker": ticker,
                 "buy_price": buy_price,
-                "standard_price": standard_price,         # ← add this line
+                "standard_price": standard_price,
                 "current_price": current_price,
                 "gain_loss_pct": gain_loss_pct,
                 "gain_loss_dollar": gain_loss_dollar,
