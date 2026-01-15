@@ -115,7 +115,7 @@ def check_prices():
         # Check for 7% drop
         drop_pct = (current_price - standard_price) / standard_price * 100
         
-        if drop_pct <= -0.1:
+        if drop_pct <= -6:
             drop_alerts.append((ticker, standard_price, current_price, drop_pct))
             print(f"  ⚠️ ALERT: {ticker} dropped {drop_pct:.1f}%")
     
@@ -123,7 +123,7 @@ def check_prices():
     if drop_alerts:
         lines = [f"**{ticker}**: {drop_pct:.1f}% drop (${std_price:.2f} → ${curr_price:.2f})" 
                  for ticker, std_price, curr_price, drop_pct in drop_alerts]
-        message = "🚨 **Price Drop Alert (7%)**\n\n" + "\n".join(lines)
+        message = "🚨 **Price Drop Alert (6%)**\n\n" + "\n".join(lines)
         send_discord_alert(message)
         print(f"\n✅ Sent {len(drop_alerts)} alert(s) to Discord")
     else:
