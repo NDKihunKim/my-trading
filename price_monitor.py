@@ -115,7 +115,7 @@ def check_prices():
         # Check for 7% drop
         drop_pct = (current_price - standard_price) / standard_price * 100
         
-        if drop_pct <= -7:
+        if drop_pct <= -0.1:
             drop_alerts.append((ticker, standard_price, current_price, drop_pct))
             print(f"  ⚠️ ALERT: {ticker} dropped {drop_pct:.1f}%")
     
