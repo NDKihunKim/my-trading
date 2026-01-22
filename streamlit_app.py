@@ -21,18 +21,22 @@ def get_supabase():
 
 supabase = get_supabase()
 
-# ----------------- LOAD PORTFOLIO (WITH standard_price) -----------------
+# ----------------- LOAD PORTFOLIO (WITH standard_price & platform) -----------------
 
 if "portfolio" not in st.session_state:
     resp = supabase.table("portfolio").select("*").execute()
     df = pd.DataFrame(resp.data) if resp.data else pd.DataFrame(
-        columns=["id", "ticker", "buy_price", "shares", "added_date", "standard_price"]
+        columns=["id", "ticker", "buy_price", "shares", "added_date", "standard_price", "platform"]
     )
 
     # Ensure standard_price exists and is initialized from buy_price if missing
     if "standard_price" not in df.columns:
         df["standard_price"] = df["buy_price"]
     df["standard_price"] = df["standard_price"].fillna(df["buy_price"])
+    
+    # Ensure platform column exists
+    if "platform" not in df.columns:
+        df["platform"] = "Questrade"
 
     st.session_state.portfolio = df
 
@@ -51,6 +55,13 @@ with st.sidebar:
         ticker = st.text_input("Ticker", help="e.g., AAPL, TSLA").upper()
         buy_price = st.number_input("Buy Price", min_value=0.01, format="%.2f")
         shares = st.number_input("Shares", min_value=1, step=1)
+        
+        # Platform selector
+        platform = st.selectbox(
+            "Platform",
+            options=["Toss", "Questrade"],
+            help="Which platform did you use to buy this stock?"
+        )
 
         if st.button("Add Stock"):
             if ticker:
@@ -62,6 +73,7 @@ with st.sidebar:
                     "shares": int(shares),
                     "added_date": added_date,
                     "standard_price": float(buy_price),
+                    "platform": platform,
                 }
                 resp = supabase.table("portfolio").insert(data).execute()
                 inserted = resp.data[0]
@@ -70,7 +82,7 @@ with st.sidebar:
                 st.session_state.portfolio = pd.concat(
                     [st.session_state.portfolio, new_row], ignore_index=True
                 )
-                st.success(f"Added {ticker}")
+                st.success(f"Added {ticker} on {platform}")
 
     # Remove stock
     if not st.session_state.portfolio.empty:
@@ -79,7 +91,7 @@ with st.sidebar:
         remove_idx = st.selectbox(
             "Select to remove:",
             range(len(st.session_state.portfolio)),
-            format_func=lambda i: st.session_state.portfolio.iloc[i]["ticker"],
+            format_func=lambda i: f"{st.session_state.portfolio.iloc[i]['ticker']} ({st.session_state.portfolio.iloc[i].get('platform', 'N/A')})",
         )
 
         if st.button("Remove"):
@@ -125,6 +137,7 @@ else:
         buy_price = float(row["buy_price"])
         shares = int(row["shares"])
         standard_price = float(row.get("standard_price", buy_price))
+        platform = row.get("platform", "N/A")
 
         current_price = float(prices_data.get(ticker, 0.0))
 
@@ -136,6 +149,7 @@ else:
         portfolio_metrics.append(
             {
                 "ticker": ticker,
+                "platform": platform,
                 "buy_price": buy_price,
                 "standard_price": standard_price,
                 "current_price": current_price,
@@ -165,8 +179,30 @@ else:
     with col4:
         st.metric("Stocks", len(df_portfolio))
 
+    # Platform breakdown
+    st.subheader("📊 Platform Breakdown")
+    platform_summary = df_portfolio.groupby("platform").agg({
+        "total_value": "sum",
+        "ticker": "count"
+    }).rename(columns={"ticker": "stocks"})
+    
+    if not platform_summary.empty:
+        col_plat1, col_plat2 = st.columns(2)
+        for idx, (platform, row) in enumerate(platform_summary.iterrows()):
+            with col_plat1 if idx % 2 == 0 else col_plat2:
+                st.metric(
+                    f"{platform}",
+                    f"${row['total_value']:,.0f}",
+                    f"{int(row['stocks'])} stocks"
+                )
+
     st.subheader("📋 Portfolio Details")
-    st.dataframe(df_portfolio.round(2), use_container_width=True)
+    
+    # Reorder columns for better display
+    display_columns = ["ticker", "platform", "buy_price", "standard_price", 
+                       "current_price", "gain_loss_pct", "gain_loss_dollar", 
+                       "total_value", "shares"]
+    st.dataframe(df_portfolio[display_columns].round(2), use_container_width=True)
 
     st.subheader("🔔 Manual Actions")
 
